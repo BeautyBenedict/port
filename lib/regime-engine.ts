@@ -2,6 +2,14 @@
 
 export type Regime = "risk_on" | "risk_off" | "high_vol";
 
+export interface RegimeSignals {
+  usdcAllocationPct: number;
+  usycAllocationPct: number;
+  totalValueUsd: number;
+  riskProfile: "conservative" | "balanced" | "aggressive";
+  previousRegime: Regime | null;
+}
+
 export interface RegimeAnalysis {
   regime: Regime;
   confidence: number;

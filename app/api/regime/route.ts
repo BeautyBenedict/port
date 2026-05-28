@@ -1,55 +1,43 @@
 // app/api/regime/route.ts
-// Server-side API route — calls Groq LLM to detect market regime
+// Server-side API route — calls Groq LLM to explain the copied trade
 // Keeps API key secure, never exposed to client
 
 import { NextRequest, NextResponse } from "next/server";
-import type { RegimeSignals, RegimeAnalysis } from "@/lib/regime-engine";
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
-function buildPrompt(signals: RegimeSignals): string {
-  const profileGuidance = {
-    conservative: "Strongly prefer capital preservation. Move to yield at any uncertainty.",
-    balanced: "Balance yield and liquidity. Moderate risk tolerance.",
-    aggressive: "Maximize yield. Only flee to USDC in extreme conditions.",
-  };
+interface CopyRequest {
+  traderName: string;
+  tradeType: string;
+  amount: string;
+  traderReasoning: string;
+}
 
-  return `You are an autonomous DeFi portfolio agent for Port, an intelligent yield optimizer on Arc Testnet.
+function buildPrompt(params: CopyRequest): string {
+  return `You are Port, a friendly AI Trade Copier Agent on Arc Testnet. 
+The user is about to copy a trade from a smart trader.
 
-Portfolio State:
-- USDC (idle): ${signals.usdcAllocationPct.toFixed(1)}% of portfolio
-- USYC (earning yield): ${signals.usycAllocationPct.toFixed(1)}% of portfolio
-- Total Value: $${signals.totalValueUsd.toFixed(2)}
-- Risk Profile: ${signals.riskProfile} — ${profileGuidance[signals.riskProfile]}
-- Previous Regime: ${signals.previousRegime ?? "none"}
+Trader Details:
+- Name: ${params.traderName}
+- Action: ${params.tradeType} (approx. ${params.amount})
+- Smart Trader Strategy: ${params.traderReasoning}
 
-Analyze current DeFi market conditions and classify the regime. Consider:
-1. Stablecoin yields and demand signals
-2. Overall crypto risk appetite
-3. On-chain volatility indicators
-4. Liquidity conditions
-5. Whether current allocation matches the detected regime
+Provide a short, clear, and reassuring explanation (2 sentences) explaining to the user why it makes sense to copy this trade and what is about to happen (e.g. "We are copying YieldAlpha by swapping USDC into USYC to capture yield while the market is volatile. This transaction will safely deposit your USDC into the Arc Teller contract.").
 
 Respond ONLY with a valid JSON object, no markdown, no extra text:
 {
-  "regime": "risk_on" or "risk_off" or "high_vol",
-  "confidence": <integer 0-100>,
-  "reasoning": "<2-3 sentences explaining your classification>",
-  "signals": {
-    "marketSentiment": "<brief assessment>",
-    "volatilityAssessment": "<brief assessment>",
-    "yieldOpportunity": "<brief assessment>",
-    "riskFactors": ["<factor 1>", "<factor 2>"]
-  },
-  "recommendation": "<specific action the agent should take>",
-  "shouldAct": <true or false>,
-  "targetUsdcPct": <integer 0-100>
+  "explanation": "<your friendly 2-sentence explanation here>"
 }`;
 }
 
 export async function POST(req: NextRequest) {
+  let body: CopyRequest | null = null;
   try {
-    const { signals } = (await req.json()) as { signals: RegimeSignals };
+    body = (await req.json()) as CopyRequest;
+    
+    if (!process.env.GROQ_API_KEY) {
+      throw new Error("Missing GROQ_API_KEY");
+    }
 
     const response = await fetch(GROQ_API_URL, {
       method: "POST",
@@ -59,16 +47,16 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model: "llama-3.3-70b-versatile",
-        temperature: 0.4,
-        max_tokens: 1024,
+        temperature: 0.5,
+        max_tokens: 256,
         messages: [
           {
             role: "system",
-            content: "You are a DeFi portfolio agent. Always respond with only valid JSON, no markdown fences, no preamble.",
+            content: "You are a helpful DeFi agent. Always respond with only valid JSON containing an 'explanation' field, no markdown fences, no preamble.",
           },
           {
             role: "user",
-            content: buildPrompt(signals),
+            content: buildPrompt(body),
           },
         ],
       }),
@@ -84,26 +72,21 @@ export async function POST(req: NextRequest) {
 
     // Strip any accidental markdown fences
     const cleaned = rawText.replace(/```json|```/g, "").trim();
-    const analysis: RegimeAnalysis = JSON.parse(cleaned);
+    const result = JSON.parse(cleaned) as { explanation: string };
 
-    return NextResponse.json(analysis);
+    return NextResponse.json(result);
   } catch (err) {
     console.error("[/api/regime]", err);
-    // Safe fallback — agent stays put, no trades
+    
+    // Fallback explanation if LLM is unavailable
+    const traderName = body?.traderName ?? "Smart Trader";
+    const tradeType = body?.tradeType ?? "USDC ↔ USYC swap";
+    const amount = body?.amount ?? "funds";
+    const fallbackText = `Copying ${traderName}'s recent action by executing a ${tradeType} swap for ${amount}. This aligns your portfolio with their current high-performance strategy on Arc Testnet.`;
+    
     return NextResponse.json(
       {
-        regime: "high_vol",
-        confidence: 30,
-        reasoning: "Could not reach AI service. Defaulting to high-volatility caution mode to protect capital.",
-        signals: {
-          marketSentiment: "Unknown — AI service unreachable",
-          volatilityAssessment: "Elevated (assumed for safety)",
-          yieldOpportunity: "Unknown",
-          riskFactors: ["API unavailable", "Cannot assess current conditions"],
-        },
-        recommendation: "Hold current positions until AI service is restored",
-        shouldAct: false,
-        targetUsdcPct: 50,
+        explanation: fallbackText,
       },
       { status: 200 }
     );
