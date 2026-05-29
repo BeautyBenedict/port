@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Port — Autonomous Portfolio Agent",
+  title: "Port",
   description: "Intelligent autonomous regime-adaptive portfolio manager on Arc Testnet",
 };
 
